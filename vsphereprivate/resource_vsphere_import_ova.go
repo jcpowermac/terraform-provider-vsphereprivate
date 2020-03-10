@@ -7,13 +7,12 @@ import (
 	_ "path"
 	_ "strings"
 
+	"github.com/davecgh/go-spew/spew"
 	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/helper/validation"
 
 	_ "github.com/vmware/govmomi/object"
 	_ "github.com/vmware/govmomi/vim25/types"
-
-	archive "github.com/jcpowermac/terraform-provider-vsphereprivate/vsphere/internal/archive"
 )
 
 func resourceVSphereImportOva() *schema.Resource {
@@ -28,17 +27,16 @@ func resourceVSphereImportOva() *schema.Resource {
 
 		SchemaVersion: 1,
 		//MigrateState:  resourceVSphereFolderMigrateState,
-/*
-type ImportOvaParams struct {
-	ResourcePool *object.ResourcePool
-	Datacenter   *object.Datacenter
-	Datastore    *object.Datastore
-	Network      *object.Network
-	Host         *object.HostSystem
-	Folder       *object.Folder
-}
-*/
-
+		/*
+		   type ImportOvaParams struct {
+		   	ResourcePool *object.ResourcePool
+		   	Datacenter   *object.Datacenter
+		   	Datastore    *object.Datastore
+		   	Network      *object.Network
+		   	Host         *object.HostSystem
+		   	Folder       *object.Folder
+		   }
+		*/
 
 		Schema: map[string]*schema.Schema{
 			"path": {
@@ -64,16 +62,15 @@ type ImportOvaParams struct {
 				Description: "The ID of a network that the virtual machine will use.",
 			},
 			"datastore_id": {
-				Type:          schema.TypeString,
-				Required: true
-				Computed:      true,
-				Description:   "The ID of the virtual machine's datastore. The virtual machine configuration is placed here, along with any virtual disks that are created without datastores.",
+				Type:        schema.TypeString,
+				Required:    true,
+				Computed:    true,
+				Description: "The ID of the virtual machine's datastore. The virtual machine configuration is placed here, along with any virtual disks that are created without datastores.",
 			},
 			"folder": {
 				Type:        schema.TypeString,
 				Optional:    true,
 				Description: "The name of the folder to locate the virtual machine in.",
-				StateFunc:   folder.NormalizePath,
 			},
 
 			// Tagging
@@ -85,7 +82,8 @@ type ImportOvaParams struct {
 }
 
 func resourceVSphereImportOvaCreate(d *schema.ResourceData, meta interface{}) error {
-	foo := &archive.FileArchive{}
+	foo := FileArchive{}
+	spew.Dump(foo)
 
 	return nil
 }
@@ -100,7 +98,6 @@ func resourceVSphereImportOvaUpdate(d *schema.ResourceData, meta interface{}) er
 }
 
 func resourceVSphereImportOvaDelete(d *schema.ResourceData, meta interface{}) error {
-	
 
 	return nil
 }
@@ -108,5 +105,3 @@ func resourceVSphereImportOvaDelete(d *schema.ResourceData, meta interface{}) er
 func resourceVSphereImportOvaImport(d *schema.ResourceData, meta interface{}) ([]*schema.ResourceData, error) {
 	return nil, nil
 }
-
-
