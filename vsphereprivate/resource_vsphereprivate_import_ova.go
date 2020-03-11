@@ -334,6 +334,11 @@ func resourceVSpherePrivateImportOvaCreate(d *schema.ResourceData, meta interfac
 	}
 
 	// TODO : Unknown if this is correct
+
+	// TODO: this is wrong figure this out tomorrow
+	// need the managedobjectreference of the virtual machine
+	// that is created by ImportVapp
+	// That will be used by ImportOvaRead
 	d.SetId(lease.ManagedObjectReference.Value)
 
 	return resourceVSpherePrivateImportOvaRead(d, meta)
