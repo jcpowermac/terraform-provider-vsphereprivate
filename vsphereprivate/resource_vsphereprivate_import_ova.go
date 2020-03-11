@@ -204,10 +204,10 @@ func findImportOvaParams(client *vim25.Client, datacenter, cluster, datastore, n
 		}
 	}
 	if !foundDatastore {
-		return nil, errors.Errorf("The hosts in the cluster do not have the datastore provided in install-config.yaml")
+		return nil, errors.Errorf("failed to find a host in the cluster that contains the provided datastore")
 	}
 	if !foundNetwork {
-		return nil, errors.Errorf("The hosts in the cluster do not have the network provided in install-config.yaml")
+		return nil, errors.Errorf("failed to find a host in the cluster that contains the provided network")
 	}
 
 	return importOvaParams, nil
@@ -247,13 +247,7 @@ func resourceVSpherePrivateImportOvaCreate(d *schema.ResourceData, meta interfac
 		return err
 	}
 
-	path := d.Get("path").(string)
-	if path == "" {
-		errors.New("this should not be empty")
-	}
-
 	ovaTapeArchive := &TapeArchive{Path: d.Get("path").(string)}
-	//ovaTapeArchive.Client = client
 
 	archive := &ArchiveFlag{}
 	archive.Archive = ovaTapeArchive
@@ -365,6 +359,43 @@ func resourceVSpherePrivateImportOvaUpdate(d *schema.ResourceData, meta interfac
 }
 
 func resourceVSpherePrivateImportOvaDelete(d *schema.ResourceData, meta interface{}) error {
+
+	ctx := context.TODO()
+	client := meta.(*VSphereClient).vimClient
+	searchIndex := object.NewSearchIndex(client.Client)
+	find := find.NewFinder(client.Client)
+	var ref object.Reference
+	var err error
+
+	datacenter, err := find.Datacenter(ctx, d.Get("datacenter").(string))
+	if err != nil {
+		return errors.Errorf("failed to locate datacenter: %s", err)
+	}
+
+	// govmomi/govc/flags/search.go - func (flag *SearchFlag) searchByUUID
+	// do we really need this.  Shouldn't there only be a single object
+	// with the uuid?
+	for _, iu := range []*bool{nil, types.NewBool(true)} {
+		ref, err = searchIndex.FindByUuid(ctx, datacenter, d.Id(), true, iu)
+		if err != nil {
+			if soap.IsSoapFault(err) {
+				fault := soap.ToSoapFault(err).VimFault()
+				if _, ok := fault.(types.InvalidArgument); ok {
+					continue
+				}
+			}
+			return errors.Errorf("unable to find virtual machine by uuid %s", err)
+		}
+		if ref != nil {
+			break
+		}
+	}
+	vm := object.NewVirtualMachine(client.Client, ref.Reference())
+
+	find.VirtualMachine()
+
+	d.SetId("")
+	log.Print("[DEBUG] : Delete complete")
 
 	return nil
 }
