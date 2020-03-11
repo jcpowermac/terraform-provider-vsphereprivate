@@ -33,10 +33,11 @@ data "vsphere_network" "network" {
 }
 
 resource "vsphereprivate_import_ova" "import" {
-  path             = "/var/home/jcallen/Downloads/rhcos-44.81.202003062006-0-vmware.x86_64.ova"
-  cluster = var.vsphere_cluster
-  datacenter    = var.vsphere_datacenter
-  datastore     = var.vsphere_datastore
-  network       = var.vsphere_network
-  folder           = "foo"
+  name       = "rhcos-44.81.202003062006-0-vmware"
+  path       = "/tmp/rhcos-44.81.202003062006-0-vmware.x86_64.ova"
+  cluster    = var.vsphere_cluster
+  datacenter = var.vsphere_datacenter
+  datastore  = var.vsphere_datastore
+  network    = var.vsphere_network
+  folder     = "foo"
 }

@@ -4,21 +4,19 @@ import (
 	"context"
 	"fmt"
 	"log"
-	_ "strings"
 
-	"github.com/davecgh/go-spew/spew"
 	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/helper/validation"
 
 	"github.com/pkg/errors"
-	_ "github.com/vmware/govmomi/object"
-	_ "github.com/vmware/govmomi/vim25/types"
-
-	//_ "github.com/sirupsen/logrus"
 	"github.com/vmware/govmomi/find"
+	"github.com/vmware/govmomi/nfc"
 	"github.com/vmware/govmomi/object"
+	"github.com/vmware/govmomi/ovf"
 	"github.com/vmware/govmomi/vim25"
 	"github.com/vmware/govmomi/vim25/mo"
+	"github.com/vmware/govmomi/vim25/soap"
+	"github.com/vmware/govmomi/vim25/types"
 )
 
 func resourceVSpherePrivateImportOva() *schema.Resource {
@@ -33,18 +31,14 @@ func resourceVSpherePrivateImportOva() *schema.Resource {
 
 		SchemaVersion: 1,
 		//MigrateState:  resourceVSphereFolderMigrateState,
-		/*
-		   type ImportOvaParams struct {
-		   	ResourcePool *object.ResourcePool
-		   	Datacenter   *object.Datacenter
-		   	Datastore    *object.Datastore
-		   	Network      *object.Network
-		   	Host         *object.HostSystem
-		   	Folder       *object.Folder
-		   }
-		*/
 
 		Schema: map[string]*schema.Schema{
+			"name": {
+				Type:         schema.TypeString,
+				Description:  "",
+				Required:     true,
+				ValidateFunc: validation.NoZeroValues,
+			},
 			"path": {
 				Type:         schema.TypeString,
 				Description:  "",
@@ -219,22 +213,144 @@ func findImportOvaParams(client *vim25.Client, datacenter, cluster, datastore, n
 	return importOvaParams, nil
 }
 
+func upload(ctx context.Context, archive *ArchiveFlag, lease *nfc.Lease, item nfc.FileItem) error {
+	file := item.Path
+
+	f, size, err := archive.Open(file)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	opts := soap.Upload{
+		ContentLength: size,
+	}
+
+	return lease.Upload(ctx, item, f, opts)
+}
+
 func resourceVSpherePrivateImportOvaCreate(d *schema.ResourceData, meta interface{}) error {
 	log.Printf("[DEBUG] : Beginning create")
 
+	// this should probably not be a TODO
+	ctx := context.TODO()
+
 	client := meta.(*VSphereClient).vimClient.Client
 
-	importParams, err := findImportOvaParams(client, d.Get("datacenter").(string), d.Get("cluster").(string), d.Get("datastore").(string), d.Get("network").(string))
+	importOvaParams, err := findImportOvaParams(client,
+		d.Get("datacenter").(string),
+		d.Get("cluster").(string),
+		d.Get("datastore").(string),
+		d.Get("network").(string))
 
 	if err != nil {
 		return err
 	}
-	spew.Dump(importParams)
+
+	path := d.Get("path").(string)
+	if path == "" {
+		errors.New("this should not be empty")
+	}
+
+	ovaTapeArchive := &TapeArchive{Path: d.Get("path").(string)}
+	//ovaTapeArchive.Client = client
+
+	archive := &ArchiveFlag{}
+	archive.Archive = ovaTapeArchive
+
+	ovfDescriptor, err := archive.ReadOvf("*.ovf")
+	if err != nil {
+		return errors.Errorf("failed to read ovf: %s", err)
+	}
+
+	ovfEnvelope, err := archive.ReadEnvelope(ovfDescriptor)
+	if err != nil {
+		return errors.Errorf("failed to parse ovf: %s", err)
+	}
+
+	// The RHCOS OVA only has one network defined by default
+	// The OVF envelope defines this.  We need a 1:1 mapping
+	// between networks with the OVF and the host
+	if len(ovfEnvelope.Network.Networks) != 1 {
+		return errors.Errorf("Expected the OVA to only have a single network adapter")
+	}
+	// Create mapping between OVF and the network object
+	// found by Name
+	networkMappings := []types.OvfNetworkMapping{{
+		Name:    ovfEnvelope.Network.Networks[0].Name,
+		Network: importOvaParams.Network.Reference(),
+	}}
+	// This is a very minimal spec for importing
+	// an OVF.
+	cisp := types.OvfCreateImportSpecParams{
+		EntityName:     d.Get("name").(string),
+		NetworkMapping: networkMappings,
+	}
+
+	m := ovf.NewManager(client)
+	spec, err := m.CreateImportSpec(ctx,
+		string(ovfDescriptor),
+		importOvaParams.ResourcePool.Reference(),
+		importOvaParams.Datastore.Reference(),
+		cisp)
+
+	if err != nil {
+		return errors.Errorf("failed to create import spec: %s", err)
+	}
+	if spec.Error != nil {
+		return errors.New(spec.Error[0].LocalizedMessage)
+	}
+
+	//Creates a new entity in this resource pool.
+	//See VMware vCenter API documentation: Managed Object - ResourcePool - ImportVApp
+	lease, err := importOvaParams.ResourcePool.ImportVApp(ctx,
+		spec.ImportSpec,
+		importOvaParams.Folder,
+		importOvaParams.Host)
+
+	if err != nil {
+		return errors.Errorf("failed to import vapp: %s", err)
+	}
+
+	info, err := lease.Wait(ctx, spec.FileItem)
+	if err != nil {
+		return errors.Errorf("failed to lease wait: %s", err)
+	}
+
+	u := lease.StartUpdater(ctx, info)
+	defer u.Done()
+
+	for _, i := range info.Items {
+		// upload the vmdk to which ever host that was first
+		// available with the required network and datastore.
+		err = upload(ctx, archive, lease, i)
+		if err != nil {
+			return errors.Errorf("failed to upload: %s", err)
+		}
+	}
+	err = lease.Complete(ctx)
+	if err != nil {
+		return errors.Errorf("failed to lease copmlete: %s", err)
+	}
+
+	// TODO : Unknown if this is correct
+	d.SetId(lease.ManagedObjectReference.Value)
 
 	return resourceVSpherePrivateImportOvaRead(d, meta)
 }
 
 func resourceVSpherePrivateImportOvaRead(d *schema.ResourceData, meta interface{}) error {
+
+	client := meta.(*VSphereClient).vimClient.Client
+	moRef := types.ManagedObjectReference{
+		Value: d.Id(),
+		Type:  "VirtualMachine",
+	}
+
+	vm := object.NewVirtualMachine(client, moRef)
+	if vm == nil {
+		return fmt.Errorf("VirtualMachine not found")
+	}
 
 	return nil
 }
