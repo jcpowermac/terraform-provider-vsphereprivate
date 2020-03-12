@@ -353,7 +353,8 @@ func resourceVSpherePrivateImportOvaRead(d *schema.ResourceData, meta interface{
 }
 
 func resourceVSpherePrivateImportOvaUpdate(d *schema.ResourceData, meta interface{}) error {
-	return nil
+	// not sure what we would ever update here
+	return resourceVSpherePrivateImportOvaRead(d, meta)
 }
 
 func resourceVSpherePrivateImportOvaDelete(d *schema.ResourceData, meta interface{}) error {
