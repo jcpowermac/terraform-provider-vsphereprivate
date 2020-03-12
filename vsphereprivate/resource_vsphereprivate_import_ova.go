@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/davecgh/go-spew/spew"
 	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/helper/validation"
 
@@ -25,9 +26,11 @@ func resourceVSpherePrivateImportOva() *schema.Resource {
 		Read:   resourceVSpherePrivateImportOvaRead,
 		Update: resourceVSpherePrivateImportOvaUpdate,
 		Delete: resourceVSpherePrivateImportOvaDelete,
-		Importer: &schema.ResourceImporter{
-			State: schema.ImportStatePassthrough,
-		},
+		/*
+			Importer: &schema.ResourceImporter{
+				State: schema.ImportStatePassthrough,
+			},
+		*/
 
 		SchemaVersion: 1,
 		//MigrateState:  resourceVSphereFolderMigrateState,
@@ -327,18 +330,34 @@ func resourceVSpherePrivateImportOvaCreate(d *schema.ResourceData, meta interfac
 		return errors.Errorf("failed to lease copmlete: %s", err)
 	}
 
-	// TODO : Unknown if this is correct
-
-	// TODO: this is wrong figure this out tomorrow
-	// need the managedobjectreference of the virtual machine
-	// that is created by ImportVapp
-	// That will be used by ImportOvaRead
-	d.SetId(lease.ManagedObjectReference.Value)
+	log.Printf("[DEBUG] moRef value: %s", spew.Sprint(info.Entity.Value))
+	d.SetId(info.Entity.Value)
 
 	return resourceVSpherePrivateImportOvaRead(d, meta)
 }
 
 func resourceVSpherePrivateImportOvaRead(d *schema.ResourceData, meta interface{}) error {
+	client := meta.(*VSphereClient).vimClient.Client
+	moRef := types.ManagedObjectReference{
+		Value: d.Id(),
+		Type:  "VirtualMachine",
+	}
+
+	vm := object.NewVirtualMachine(client, moRef)
+	if vm == nil {
+		return fmt.Errorf("VirtualMachine not found")
+	}
+	log.Printf("[DEBUG] VirtualMachineObject: %s", spew.Sprint(vm))
+
+	return nil
+}
+
+func resourceVSpherePrivateImportOvaUpdate(d *schema.ResourceData, meta interface{}) error {
+	return nil
+}
+
+func resourceVSpherePrivateImportOvaDelete(d *schema.ResourceData, meta interface{}) error {
+	ctx := context.TODO()
 
 	client := meta.(*VSphereClient).vimClient.Client
 	moRef := types.ManagedObjectReference{
@@ -351,48 +370,15 @@ func resourceVSpherePrivateImportOvaRead(d *schema.ResourceData, meta interface{
 		return fmt.Errorf("VirtualMachine not found")
 	}
 
-	return nil
-}
-
-func resourceVSpherePrivateImportOvaUpdate(d *schema.ResourceData, meta interface{}) error {
-	return nil
-}
-
-func resourceVSpherePrivateImportOvaDelete(d *schema.ResourceData, meta interface{}) error {
-
-	ctx := context.TODO()
-	client := meta.(*VSphereClient).vimClient
-	searchIndex := object.NewSearchIndex(client.Client)
-	find := find.NewFinder(client.Client)
-	var ref object.Reference
-	var err error
-
-	datacenter, err := find.Datacenter(ctx, d.Get("datacenter").(string))
+	task, err := vm.Destroy(ctx)
 	if err != nil {
-		return errors.Errorf("failed to locate datacenter: %s", err)
+		return errors.Errorf("failed to destroy virtual machine %s", err)
 	}
 
-	// govmomi/govc/flags/search.go - func (flag *SearchFlag) searchByUUID
-	// do we really need this.  Shouldn't there only be a single object
-	// with the uuid?
-	for _, iu := range []*bool{nil, types.NewBool(true)} {
-		ref, err = searchIndex.FindByUuid(ctx, datacenter, d.Id(), true, iu)
-		if err != nil {
-			if soap.IsSoapFault(err) {
-				fault := soap.ToSoapFault(err).VimFault()
-				if _, ok := fault.(types.InvalidArgument); ok {
-					continue
-				}
-			}
-			return errors.Errorf("unable to find virtual machine by uuid %s", err)
-		}
-		if ref != nil {
-			break
-		}
+	err = task.Wait(ctx)
+	if err != nil {
+		return errors.Errorf("failed to destroy virtual machine %s", err)
 	}
-	vm := object.NewVirtualMachine(client.Client, ref.Reference())
-
-	find.VirtualMachine()
 
 	d.SetId("")
 	log.Print("[DEBUG] : Delete complete")
@@ -400,6 +386,10 @@ func resourceVSpherePrivateImportOvaDelete(d *schema.ResourceData, meta interfac
 	return nil
 }
 
+/*
 func resourceVSpherePrivateImportOvaImport(d *schema.ResourceData, meta interface{}) ([]*schema.ResourceData, error) {
+
+	//so this is important to determine if the machine is here...
 	return nil, nil
 }
+*/

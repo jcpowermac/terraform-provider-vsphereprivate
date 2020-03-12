@@ -4,6 +4,7 @@ set -xe
 export TF_LOG=TRACE
 export TF_LOG_PATH=$(pwd)/terraform.tf.log
 
+
 go build -o terraform-provider-vsphereprivate
 ./terraform init
-./terraform apply -auto-approve
+./terraform destroy -auto-approve
