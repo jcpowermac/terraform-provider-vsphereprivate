@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/davecgh/go-spew/spew"
 	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/helper/validation"
 
@@ -22,19 +21,11 @@ import (
 
 func resourceVSpherePrivateImportOva() *schema.Resource {
 	return &schema.Resource{
-		Create: resourceVSpherePrivateImportOvaCreate,
-		Read:   resourceVSpherePrivateImportOvaRead,
-		Update: resourceVSpherePrivateImportOvaUpdate,
-		Delete: resourceVSpherePrivateImportOvaDelete,
-		/*
-			Importer: &schema.ResourceImporter{
-				State: schema.ImportStatePassthrough,
-			},
-		*/
-
+		Create:        resourceVSpherePrivateImportOvaCreate,
+		Read:          resourceVSpherePrivateImportOvaRead,
+		Update:        resourceVSpherePrivateImportOvaUpdate,
+		Delete:        resourceVSpherePrivateImportOvaDelete,
 		SchemaVersion: 1,
-		//MigrateState:  resourceVSphereFolderMigrateState,
-
 		Schema: map[string]*schema.Schema{
 			"name": {
 				Type:         schema.TypeString,
@@ -42,7 +33,7 @@ func resourceVSpherePrivateImportOva() *schema.Resource {
 				Required:     true,
 				ValidateFunc: validation.NoZeroValues,
 			},
-			"path": {
+			"filename": {
 				Type:         schema.TypeString,
 				Description:  "",
 				Required:     true,
@@ -51,7 +42,6 @@ func resourceVSpherePrivateImportOva() *schema.Resource {
 			"datacenter": {
 				Type:        schema.TypeString,
 				Description: "The ID of the datacenter. Can be ignored if creating a datacenter folder, otherwise required.",
-				Optional:    false,
 				Required:    true,
 			},
 			"cluster": {
@@ -216,6 +206,10 @@ func findImportOvaParams(client *vim25.Client, datacenter, cluster, datastore, n
 	return importOvaParams, nil
 }
 
+// Used govc/importx/ovf.go as an example to implement
+// resourceVspherePrivateImportOvaCreate and upload functions
+// See: https://github.com/vmware/govmomi/blob/master/govc/importx/ovf.go#L196-L324
+
 func upload(ctx context.Context, archive *ArchiveFlag, lease *nfc.Lease, item nfc.FileItem) error {
 	file := item.Path
 
@@ -233,27 +227,22 @@ func upload(ctx context.Context, archive *ArchiveFlag, lease *nfc.Lease, item nf
 }
 
 func resourceVSpherePrivateImportOvaCreate(d *schema.ResourceData, meta interface{}) error {
-	log.Printf("[DEBUG] : Beginning create")
+	log.Printf("[DEBUG] %s: Beginning import ova create", d.Get("filename").(string))
 
-	// this should probably not be a TODO
 	ctx := context.TODO()
-
 	client := meta.(*VSphereClient).vimClient.Client
+	ovaTapeArchive := &TapeArchive{Path: d.Get("filename").(string)}
+	archive := &ArchiveFlag{}
+	archive.Archive = ovaTapeArchive
 
 	importOvaParams, err := findImportOvaParams(client,
 		d.Get("datacenter").(string),
 		d.Get("cluster").(string),
 		d.Get("datastore").(string),
 		d.Get("network").(string))
-
 	if err != nil {
 		return err
 	}
-
-	ovaTapeArchive := &TapeArchive{Path: d.Get("path").(string)}
-
-	archive := &ArchiveFlag{}
-	archive.Archive = ovaTapeArchive
 
 	ovfDescriptor, err := archive.ReadOvf("*.ovf")
 	if err != nil {
@@ -325,13 +314,14 @@ func resourceVSpherePrivateImportOvaCreate(d *schema.ResourceData, meta interfac
 			return errors.Errorf("failed to upload: %s", err)
 		}
 	}
+
 	err = lease.Complete(ctx)
 	if err != nil {
 		return errors.Errorf("failed to lease copmlete: %s", err)
 	}
 
-	log.Printf("[DEBUG] moRef value: %s", spew.Sprint(info.Entity.Value))
 	d.SetId(info.Entity.Value)
+	log.Printf("[DEBUG] %s: ova import complete", d.Get("name").(string))
 
 	return resourceVSpherePrivateImportOvaRead(d, meta)
 }
@@ -347,17 +337,16 @@ func resourceVSpherePrivateImportOvaRead(d *schema.ResourceData, meta interface{
 	if vm == nil {
 		return fmt.Errorf("VirtualMachine not found")
 	}
-	log.Printf("[DEBUG] VirtualMachineObject: %s", spew.Sprint(vm))
 
 	return nil
 }
 
 func resourceVSpherePrivateImportOvaUpdate(d *schema.ResourceData, meta interface{}) error {
-	// not sure what we would ever update here
 	return resourceVSpherePrivateImportOvaRead(d, meta)
 }
 
 func resourceVSpherePrivateImportOvaDelete(d *schema.ResourceData, meta interface{}) error {
+	log.Printf("[DEBUG] %s: Beginning delete", d.Get("name").(string))
 	ctx := context.TODO()
 
 	client := meta.(*VSphereClient).vimClient.Client
@@ -368,7 +357,7 @@ func resourceVSpherePrivateImportOvaDelete(d *schema.ResourceData, meta interfac
 
 	vm := object.NewVirtualMachine(client, moRef)
 	if vm == nil {
-		return fmt.Errorf("VirtualMachine not found")
+		return errors.Errorf("VirtualMachine not found")
 	}
 
 	task, err := vm.Destroy(ctx)
@@ -382,15 +371,8 @@ func resourceVSpherePrivateImportOvaDelete(d *schema.ResourceData, meta interfac
 	}
 
 	d.SetId("")
-	log.Print("[DEBUG] : Delete complete")
+
+	log.Printf("[DEBUG] %s: Delete complete", d.Get("name").(string))
 
 	return nil
 }
-
-/*
-func resourceVSpherePrivateImportOvaImport(d *schema.ResourceData, meta interface{}) ([]*schema.ResourceData, error) {
-
-	//so this is important to determine if the machine is here...
-	return nil, nil
-}
-*/
